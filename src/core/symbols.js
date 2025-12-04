@@ -1,0 +1,15 @@
+export const CONFIG = Symbol('StealthIO.config');
+export const MIDDLEWARE = Symbol('StealthIO.middleware');
+export const TRANSPORT = Symbol('StealthIO.transport');
+export const ABORT_CONTROLLER = Symbol('StealthIO.abortController');
+export const IS_REQUEST = Symbol('StealthIO.isRequest');
+export const IS_RESPONSE = Symbol('StealthIO.isResponse');
+export const RAW_BODY = Symbol('StealthIO.rawBody');
+export const BODY_CONSUMED = Symbol('StealthIO.bodyConsumed');
+export const ORIGINAL_REQUEST = Symbol('StealthIO.originalRequest');
+export const REDIRECT_HISTORY = Symbol('StealthIO.redirectHistory');
+export const TIMING = Symbol('StealthIO.timing');
+export const RETRY_COUNT = Symbol('StealthIO.retryCount');
+export const INTERNAL_STATE = Symbol('StealthIO.internalState');
+export const RESOLVED_URL = Symbol('StealthIO.resolvedUrl');
+export const METADATA = Symbol('StealthIO.metadata');
