@@ -34,6 +34,8 @@
 	- [Request cancellation with AbortSignal](#request-cancellation-with-abortsignal)
 	- [Middleware](#middleware)
 	- [Retry Logic](#retry-logic)
+	- [Rate Limiting](#rate-limiting)
+	- [Pattern-Based Retry](#pattern-based-retry)
 - [API](#api)
 	- [stealthIO(url[, options])](#stealthiourl-options)
 	- [Options](#options)
@@ -46,6 +48,7 @@
 	- [Class: NetworkError](#class-networkerror)
 	- [Class: HTTPError](#class-httperror)
 	- [Class: RetryError](#class-retryerror)
+	- [Class: RateLimitError](#class-ratelimiterror)
 - [Middleware](#middleware-1)
 	- [Built-in Middleware](#built-in-middleware)
 	- [Custom Middleware](#custom-middleware)
@@ -74,6 +77,8 @@ Why build another HTTP client when so many exist? Because sometimes you need ful
 - **Response Body Processing**: Support for JSON, text, buffer, and stream responses
 - **Middleware Pipeline**: Koa-style onion model for request/response interception
 - **Configurable Retry Logic**: Exponential backoff with jitter support
+- **Pattern-Based Retry**: Retry on response body/header patterns (unique feature)
+- **Rate Limiting**: Built-in rate limiter with queue support for API integrations
 - **Request Timeout**: Configurable timeout with proper cleanup
 - **Abort/Cancellation**: Full AbortController/AbortSignal support
 - **Automatic Redirects**: Follow redirects with configurable limits
@@ -403,6 +408,196 @@ Available policies:
 - `conservative`: 2 retries, 2000ms delay, exponential
 - `none`: No retries
 
+### Rate Limiting
+
+Built-in rate limiting with queue support for API integrations:
+
+```js
+import { createClient } from 'stealth-io';
+
+const client = createClient({
+	rateLimit: {
+		maxRequests: 50,
+		perMs: 1000,
+		queue: true
+	}
+});
+
+const response = await client.get('https://api.example.com/data');
+```
+
+Alternative time-based configurations:
+
+```js
+const client = createClient({
+	rateLimit: { perSecond: 10 }
+});
+
+const client = createClient({
+	rateLimit: { perMinute: 60 }
+});
+
+const client = createClient({
+	rateLimit: { perHour: 1000 }
+});
+```
+
+Full rate limit options:
+
+```js
+const client = createClient({
+	rateLimit: {
+		maxRequests: 50,
+		perMs: 1000,
+		queue: true,
+		maxQueueSize: 100,
+		queueTimeout: 60000,
+		algorithm: 'sliding-window',
+		burstLimit: null,
+		onThrottle: ({ waitTime, queueSize, queued }) => {
+			console.log(`Rate limited. Wait: ${waitTime}ms`);
+		},
+		onDequeue: ({ waitedMs, remainingQueue }) => {
+			console.log(`Request dequeued after ${waitedMs}ms`);
+		}
+	}
+});
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxRequests` | `number` | `50` | Maximum requests per time window |
+| `perMs` | `number` | `1000` | Time window in milliseconds |
+| `perSecond` | `number` | - | Shorthand for requests per second |
+| `perMinute` | `number` | - | Shorthand for requests per minute |
+| `perHour` | `number` | - | Shorthand for requests per hour |
+| `queue` | `boolean` | `false` | Queue requests instead of rejecting |
+| `maxQueueSize` | `number` | `100` | Maximum queue size |
+| `queueTimeout` | `number` | `60000` | Queue timeout in milliseconds |
+| `algorithm` | `string` | `'sliding-window'` | Algorithm: `'sliding-window'` or `'token-bucket'` |
+| `burstLimit` | `number` | `null` | Burst limit for token bucket algorithm |
+| `onThrottle` | `function` | `null` | Callback when rate limited |
+| `onDequeue` | `function` | `null` | Callback when request is dequeued |
+
+Accessing the rate limiter:
+
+```js
+const limiter = client.getRateLimiter();
+console.log(limiter.getRemainingRequests());
+console.log(limiter.getQueueSize());
+
+client.setRateLimit({ perSecond: 20 });
+
+client.setRateLimit(null);
+```
+
+### Pattern-Based Retry
+
+Retry requests based on response body or header patterns:
+
+```js
+import { createClient } from 'stealth-io';
+
+const client = createClient({
+	retry: {
+		maxRetries: 5,
+		matchBody: /temporarily unavailable/i
+	}
+});
+```
+
+Full pattern retry options:
+
+```js
+const client = createClient({
+	retry: {
+		maxRetries: 5,
+		retryDelay: 1000,
+		maxRetryDelay: 30000,
+		retryStrategy: 'exponential',
+		matchBody: [/temporarily unavailable/i, /rate limit/i],
+		matchHeaders: { 'x-ratelimit-remaining': '0' },
+		matchStatus: [429, 500, 502, 503, 504],
+		matchAny: true,
+		excludeBody: /permanent error/i,
+		excludeHeaders: { 'x-no-retry': 'true' },
+		excludeStatus: [404, 401],
+		onRetry: ({ response, attempt, delay, reason }) => {
+			console.log(`Retry ${attempt + 1}, reason: ${reason}`);
+		},
+		onPatternMatch: ({ response, attempt, result }) => {
+			console.log(`Pattern matched: ${result.reason}`);
+		}
+	}
+});
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxRetries` | `number` | `3` | Maximum retry attempts |
+| `retryDelay` | `number` | `1000` | Base retry delay in milliseconds |
+| `maxRetryDelay` | `number` | `30000` | Maximum retry delay |
+| `retryStrategy` | `string` | `'exponential'` | Backoff strategy |
+| `matchBody` | `RegExp\|string\|function\|array` | - | Body patterns to trigger retry |
+| `matchHeaders` | `object` | - | Header patterns to trigger retry |
+| `matchStatus` | `number\|array\|Set\|function` | - | Status codes to trigger retry |
+| `matchAny` | `boolean` | `false` | Retry if any pattern matches (default: all must match) |
+| `excludeBody` | `RegExp\|string\|function\|array` | - | Body patterns to prevent retry |
+| `excludeHeaders` | `object` | - | Header patterns to prevent retry |
+| `excludeStatus` | `number\|array\|Set` | - | Status codes to prevent retry |
+| `onRetry` | `function` | - | Callback on retry |
+| `onPatternMatch` | `function` | - | Callback when pattern matches |
+
+Pre-built patterns for common APIs:
+
+```js
+import { createClient, createApiSpecificPatterns } from 'stealth-io';
+
+const discordPatterns = createApiSpecificPatterns('discord');
+const client = createClient({
+	retry: {
+		maxRetries: 5,
+		...discordPatterns
+	}
+});
+```
+
+Supported APIs: `discord`, `twitter`, `shopify`, `github`, `stripe`
+
+Common pattern matchers:
+
+```js
+import { createCommonPatternMatchers } from 'stealth-io';
+
+const patterns = createCommonPatternMatchers();
+
+const client = createClient({
+	retry: {
+		maxRetries: 3,
+		matchBody: [
+			patterns.temporarilyUnavailable,
+			patterns.rateLimited,
+			patterns.maintenance,
+			patterns.overloaded
+		],
+		matchAny: true
+	}
+});
+```
+
+Available patterns:
+- `temporarilyUnavailable` - Matches "temporarily unavailable"
+- `rateLimited` - Matches "rate limit", "too many requests", "throttle"
+- `maintenance` - Matches "maintenance", "down for maintenance"
+- `overloaded` - Matches "overloaded", "capacity", "try again later"
+- `serviceUnavailable` - Matches "service unavailable", "503"
+- `timeout` - Matches "timeout", "timed out"
+- `internalError` - Matches "internal error", "unexpected error"
+- `badGateway` - Matches "bad gateway", "502"
+- `gatewayTimeout` - Matches "gateway timeout", "504"
+- `connectionError` - Matches "connection refused", "connection reset"
+- `retryLater` - Matches "retry", "try again", "come back later"
+
 ## API
 
 ### stealthIO(url[, options])
@@ -433,7 +628,9 @@ The default values are shown after each option key.
 	signal: null,
 	params: {},
 	auth: null,
-	baseURL: null
+	baseURL: null,
+	rateLimit: null,
+	retry: null
 }
 ```
 
@@ -454,6 +651,8 @@ The default values are shown after each option key.
 | `params` | `object` | `{}` | URL query parameters |
 | `auth` | `object` | `null` | Authentication `{ username, password }` |
 | `baseURL` | `string` | `null` | Base URL prepended to relative URLs |
+| `rateLimit` | `object` | `null` | Rate limiting configuration |
+| `retry` | `object` | `null` | Pattern-based retry configuration |
 
 <a id="class-stealthclient"></a>
 
@@ -502,6 +701,19 @@ const client = new StealthClient({
 - Returns: `StealthClient` (for chaining)
 
 Add middleware to the request pipeline.
+
+#### client.getRateLimiter()
+
+- Returns: `RateLimiter | null`
+
+Get the rate limiter instance.
+
+#### client.setRateLimit(config)
+
+- `config` Rate limit configuration object or `null` to disable
+- Returns: `void`
+
+Update or disable rate limiting.
 
 <a id="class-stealthresponse"></a>
 
@@ -634,6 +846,31 @@ Thrown when all retry attempts are exhausted.
 - `error.attempts` - Number of attempts made
 - `error.lastError` - The last error encountered
 
+<a id="class-ratelimiterror"></a>
+
+### Class: RateLimitError
+
+Thrown when rate limit is exceeded and queue is disabled.
+
+- `error.retryAfter` - Suggested wait time in milliseconds
+- `error.queueSize` - Current queue size
+
+```js
+import { createClient, RateLimitError } from 'stealth-io';
+
+const client = createClient({
+	rateLimit: { maxRequests: 2, perMs: 1000, queue: false }
+});
+
+try {
+	await client.get('/endpoint');
+} catch (error) {
+	if (error instanceof RateLimitError) {
+		console.log(`Rate limited. Retry after ${error.retryAfter}ms`);
+	}
+}
+```
+
 ## Middleware
 
 ### Built-in Middleware
@@ -726,7 +963,7 @@ stealth-io/
     core/           # Constants, symbols, and error classes
     utils/          # Utility functions (headers, query, url, streams)
     types/          # Request and response type definitions
-    http/           # Transport, abort, retry, request/response handling
+    http/           # Transport, abort, retry, rate-limiter, pattern-retry
     middleware/     # Middleware pipeline and built-in middleware
     client/         # Main StealthClient class
     index.js        # Main entry point
