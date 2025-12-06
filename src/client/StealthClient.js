@@ -9,6 +9,10 @@ import { StealthResponse } from '../types/response.js';
 import { StealthAbortController } from '../http/abort.js';
 import { createRetryWrapper } from '../http/retry.js';
 import { HTTPError } from '../core/errors.js';
+import { RateLimiter, parseRateLimitConfig } from '../http/rate-limiter.js';
+import { createPatternRetryWrapper, parsePatternRetryConfig } from '../http/pattern-retry.js';
+
+const RATE_LIMITER = Symbol('StealthIO.rateLimiter');
 
 export class StealthClient {
   constructor(config = {}) {
@@ -25,12 +29,21 @@ export class StealthClient {
       maxRetryDelay: config.maxRetryDelay ?? DEFAULT_CONFIG.maxRetryDelay,
       retryStrategy: config.retryStrategy || 'exponential',
       responseType: config.responseType || 'auto',
-      decompress: config.decompress !== false
+      decompress: config.decompress !== false,
+      rateLimit: config.rateLimit || null,
+      retry: config.retry || null
     };
 
     this[MIDDLEWARE] = new MiddlewarePipeline();
     const transportOptions = config.transport || {};
     this[TRANSPORT] = config.customTransport || new NodeTransport(transportOptions);
+
+    if (config.rateLimit) {
+      const rateLimitConfig = parseRateLimitConfig(config.rateLimit);
+      this[RATE_LIMITER] = new RateLimiter(rateLimitConfig);
+    } else {
+      this[RATE_LIMITER] = null;
+    }
   }
 
   get config() {
@@ -74,6 +87,17 @@ export class StealthClient {
     config[METADATA].startTime = Date.now();
     config[METADATA].redirectHistory = [];
     config[METADATA].retryCount = 0;
+
+    if (this[RATE_LIMITER]) {
+      await this[RATE_LIMITER].acquire();
+    }
+
+    const retryConfig = config.retry || this[CONFIG].retry;
+    if (retryConfig && (retryConfig.matchBody || retryConfig.matchHeaders || retryConfig.matchStatus)) {
+      const patternRetryConfig = parsePatternRetryConfig(retryConfig);
+      const patternRetryWrapper = createPatternRetryWrapper(patternRetryConfig);
+      return patternRetryWrapper((ctx) => this._executeRequest(ctx), config);
+    }
 
     if (config.maxRetries > 0) {
       const retryWrapper = createRetryWrapper({
@@ -172,13 +196,28 @@ export class StealthClient {
       maxRetryDelay: config.maxRetryDelay ?? this[CONFIG].maxRetryDelay,
       retryStrategy: config.retryStrategy ?? this[CONFIG].retryStrategy,
       responseType: config.responseType ?? this[CONFIG].responseType,
-      decompress: config.decompress ?? this[CONFIG].decompress
+      decompress: config.decompress ?? this[CONFIG].decompress,
+      rateLimit: config.rateLimit ?? this[CONFIG].rateLimit,
+      retry: config.retry ?? this[CONFIG].retry
     };
 
     const newClient = new StealthClient(mergedConfig);
     const middlewareClone = this[MIDDLEWARE].clone();
     newClient[MIDDLEWARE] = middlewareClone;
     return newClient;
+  }
+
+  getRateLimiter() {
+    return this[RATE_LIMITER];
+  }
+
+  setRateLimit(config) {
+    if (config) {
+      const rateLimitConfig = parseRateLimitConfig(config);
+      this[RATE_LIMITER] = new RateLimiter(rateLimitConfig);
+    } else {
+      this[RATE_LIMITER] = null;
+    }
   }
 
   createAbortController() {
@@ -197,6 +236,10 @@ export class StealthClient {
       this[TRANSPORT].destroy();
     }
     this[MIDDLEWARE].clear();
+    if (this[RATE_LIMITER]) {
+      this[RATE_LIMITER].clearQueue();
+      this[RATE_LIMITER] = null;
+    }
   }
 }
 

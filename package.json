@@ -17,9 +17,19 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["http", "https", "client", "request", "fetch", "native"],
+  "keywords": [
+    "http",
+    "https",
+    "client",
+    "request",
+    "fetch",
+    "native"
+  ],
   "license": "MIT",
   "devDependencies": {
     "jest": "^29.7.0"
+  },
+  "dependencies": {
+    "stealth-io": "^1.0.0"
   }
 }
