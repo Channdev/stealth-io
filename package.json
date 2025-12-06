@@ -1,6 +1,6 @@
 {
   "name": "stealth-io",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "stealth-io",
   "type": "module",
   "main": "./src/index.js",
