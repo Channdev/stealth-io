@@ -49,7 +49,21 @@ export {
   createRetryWrapper,
   withRetry,
   getRetryAfter,
-  createRetryPolicy
+  createRetryPolicy,
+  RateLimiter,
+  RateLimitError,
+  createRateLimiter,
+  createRateLimitedWrapper,
+  parseRateLimitConfig,
+  matchesPattern,
+  matchesBodyPattern,
+  matchesHeaderPattern,
+  matchesStatusPattern,
+  shouldRetryOnPattern,
+  createPatternRetryWrapper,
+  parsePatternRetryConfig,
+  createCommonPatternMatchers,
+  createApiSpecificPatterns
 } from './http/index.js';
 
 export {
